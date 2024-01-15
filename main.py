@@ -1,37 +1,27 @@
-!pip
-install
-transformers
-einops
-accelerate
-langchain
-bitsandbytes
-sentence_transformers
-faiss - cpu
-gradio
-pypdf
-sentencepiece
-# %%
-from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline 
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer 
 
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 
-from langchain.document_loaders.csv_loader import CSVLoader
+from langchain.document_loaders.csv_loader import CSVLoader 
 
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 
-from langchain.chains import RetrievalQA
+from langchain.chains import RetrievalQA 
 
-import transformers
+import transformers 
 
-import torch
+import torch 
 
-import gradio
+import pandas as pd
+
+import gradio 
 
 import textwrap
 
-# %%
+import chardet
+
 model = "meta-llama/Llama-2-7b-chat-hf"
 
 tokenizer = AutoTokenizer.from_pretrained(model)
@@ -63,35 +53,39 @@ pipeline = transformers.pipeline(
 )
 
 llm = HuggingFacePipeline(pipeline=pipeline, model_kwargs={'temperature': 0})
-# %%
-embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cuda'})
-# %%
-loader = CSVLoader(
-    r'C:\Users\Om\PycharmProjects\Agriculture Data Analyser\Data\Production_Crops_Livestock_E_All_Data.csv',
-    encoding="ISO-8859-1", csv_args={'delimiter': ','})
 
-data = loader.load()
-# %%
-vectorstore = FAISS.from_documents(data, embeddings)
-# %%
-chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=True,
-                                    retriever=vectorstore.as_retriever())
+embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2',model_kwargs={'device': 'cuda'})
 
-query = "What is the annual salary of Sophie Silva?"
-
-result = chain(query)
-
-wrapped_text = textwrap.fill(result['result'], width=500)
-
-wrapped_text
-llm("How old is Data Science Dojo?")
-# %%
 import gradio as gr
 
 import pandas as pd
+from langchain_core.documents import Document
 
 
 def main(dataset, qs):
+    # Use chardet to detect the encoding
+    with open(dataset.name, 'rb') as f:
+        result = chardet.detect(f.read())
+    encoding = result['encoding']
+
+    # Load data using the detected encoding
+    df = pd.read_csv(dataset.name, encoding=encoding)
+
+    # Get the names of text columns dynamically
+    text_columns = [col for col in df.columns if df[col].dtype == 'object']
+
+    # Check if there are any text columns
+    if not text_columns:
+        raise ValueError("No text columns found in the dataset.")
+
+    # Concatenate text from multiple columns into a single 'text' column
+    df['text'] = df[text_columns].apply(lambda x: ' '.join(map(str, x)), axis=1)
+
+    # Create a list of documents
+    documents = [Document(page_content=row['text']) for _, row in df.iterrows()]
+
+    # Create the FAISS vector store
+    vectorstore = FAISS.from_documents(documents, embeddings)
     # df = pd.read_csv(dataset.name)
     chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=False,
                                         retriever=vectorstore.as_retriever())
@@ -104,45 +98,36 @@ def main(dataset, qs):
     return wrapped_text
 
 
-# %%
 
-# %%
+import pandas as pd
+
 def dataset_change(dataset):
-    global vectorstore
+    # Use chardet to detect the encoding
+    with open(dataset.name, 'rb') as f:
+        result = chardet.detect(f.read())
+    encoding = result['encoding']
 
-    loader = CSVLoader(dataset.name, encoding="ISO-8859-1", csv_args={'delimiter': ','})
+    # Load data using the detected encoding
+    df = pd.read_csv(dataset.name, encoding=encoding)
 
-    data = loader.load()
+    # Display the first 5 rows in UI
+    df_head = df.head(5)
 
-    vectorstore = FAISS.from_documents(data, embeddings)
-
-    df = pd.read_csv(dataset.name)
-
-    return df.head(5)
-
+    return df_head
 
 with gr.Blocks() as demo:
     with gr.Row():
         with gr.Column():
             data = gr.File()
-
             qs = gr.Text(label="Input Question")
-
             submit_btn = gr.Button("Submit")
-
         with gr.Column():
             answer = gr.Text(label="Output Answer")
-
     with gr.Row():
         dataframe = gr.Dataframe()
 
     submit_btn.click(main, inputs=[data, qs], outputs=[answer])
-
     data.change(fn=dataset_change, inputs=data, outputs=[dataframe])
-
-    gr.Examples([["What is the Annual Salary of Theodore Dinh?"], ["What is the Department of Parker James?"]],
-                inputs=[qs])
+    gr.Examples([["What is the Annual Salary of Theodore Dinh?"], ["What is the Department of Parker James?"]], inputs=[qs])
 
 demo.launch(debug=True)
-
-# %%

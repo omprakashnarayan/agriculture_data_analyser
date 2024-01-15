@@ -1,112 +1,118 @@
-import mysql.connector
-import nltk
-from nltk.tokenize
-import word_tokenize
-from nltk.corpus
-import stopwords
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+from transformers import AutoTokenizer
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.document_loaders.csv_loader import CSVLoader
+from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
+from langchain.chains import RetrievalQA
+import transformers
+import torch
+import pandas as pd
+import gradio
+import textwrap
+import chardet
 
-# Connect to the database
-conn = mysql.connector.connect(
-    host = "your_host",
-    user = "your_username",
-    password = "your_password",
-    database = "your_database",
+import torch
+print(torch.cuda.is_available())
+
+model = "meta-llama/Llama-2-7b-chat-hf"
+tokenizer = AutoTokenizer.from_pretrained(model)
+pipeline = transformers.pipeline(
+    "text-generation",  # task
+    model=model,
+    tokenizer=tokenizer,
+    torch_dtype=torch.bfloat16,
+    trust_remote_code=True,
+    device_map="auto",
+    max_length=1000,
+    do_sample=True,
+    top_k=10,
+    num_return_sequences=1,
+    eos_token_id=tokenizer.eos_token_id
 )
-cursor = conn.cursor()
 
-# Function to convert natural language queries into SQL queries
-def convert_to_sql(query): #Tokenize the query
-tokens = word_tokenize(query)
+llm = HuggingFacePipeline(pipeline=pipeline, model_kwargs={'temperature': 0})
 
-# Remove stopwords
-stop_words = set(stopwords.words("english"))
-filtered_tokens = [token
-    for token in tokens
-    if token.lower() not in stop_words
-]
-
-# Extract relevant keywords from the query
-keywords = []
-for token in filtered_tokens:
-    cursor.execute("SELECT keyword FROM keyword_mapping WHERE keyword=%s", (token, ))
-result = cursor.fetchone()
-if result:
-    keywords.append(result[0])
-
-# Generate SQL query
-sql_query = "SELECT * FROM data_table WHERE "
-for keyword in keywords:
-    sql_query += keyword + " AND "
-
-sql_query = sql_query[: -5]# Remove the extra "AND"
-at the end
-
-return sql_query
+# Initialize embeddings with additional debugging information
+try:
+    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cuda'})
+    print("embedings", embeddings)
+except Exception as e:
+    print(f"An error occurred during embeddings model initialization: {e}")
+    raise
 
 
-# Function to execute the SQL query and fetch data from the database
-def execute_query(sql_query):
-    cursor.execute(sql_query)
-result = cursor.fetchall()
-return result
+
+import gradio as gr
+import pandas as pd
+from langchain_core.documents import Document
 
 
-# Function to insert data into the database
-def insert_data(values):
-    insert_query = (
-        "INSERT INTO data_table (column1, column2, column3) VALUES (%s, %s, %s)"
-    )
-cursor.execute(insert_query, values)
-conn.commit()
-print("Data inserted successfully.")
+
+def main(dataset, qs):
+    # Use chardet to detect the encoding
+    with open(dataset.name, 'rb') as f:
+        result = chardet.detect(f.read())
+    encoding = result['encoding']
+
+    # Load data using the detected encoding
+    df = pd.read_csv(dataset.name, encoding=encoding)
+
+    # Get the names of text columns dynamically
+    text_columns = [col for col in df.columns if df[col].dtype == 'object']
+
+    # Check if there are any text columns
+    if not text_columns:
+        raise ValueError("No text columns found in the dataset.")
+
+    # Concatenate text from multiple columns into a single 'text' column
+    df['text'] = df[text_columns].apply(lambda x: ' '.join(map(str, x)), axis=1)
+
+    # Create a list of documents
+    documents = [Document(page_content=row['text']) for _, row in df.iterrows()]
+
+    # Create the FAISS vector store
+    vectorstore = Chroma.from_documents(documents, embeddings)
+    # df = pd.read_csv(dataset.name)
+    chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=False,
+                                        retriever=vectorstore.as_retriever())
+
+    # query = "What is the annual salary of Sophie Silva?"
+
+    result = chain(qs)
+
+    wrapped_text = textwrap.fill(result['result'], width=500)
+    return wrapped_text
 
 
-# Function to update data in the database
-def update_data(column_name, new_value, condition):
-    update_query = f "UPDATE data_table SET {column_name} = %s WHERE {condition}"
-cursor.execute(update_query, (new_value, ))
-conn.commit()
-print("Data updated successfully.")
 
+def dataset_change(dataset):
+    # Use chardet to detect the encoding
+    with open(dataset.name, 'rb') as f:
+        result = chardet.detect(f.read())
+    encoding = result['encoding']
 
-# Function to delete data from the database
-def delete_data(condition):
-    delete_query = f "DELETE FROM data_table WHERE {condition}"
-cursor.execute(delete_query)
-conn.commit()
-print("Data deleted successfully.")
+    # Load data using the detected encoding
+    df = pd.read_csv(dataset.name, encoding=encoding)
 
+    # Display the first 5 rows in UI
+    df_head = df.head(5)
 
-# Main program loop
-while True:
-    user_input = input("Enter your query (type 'exit' to quit): ")
-if user_input == "exit":
-    break
+    return df_head
 
-# Check
-if it is an insert, update, or delete operation
-if user_input.startswith("insert"): #Example input: insert value1 value2 value3
-values = user_input.split()[1: ]
-insert_data(values)
-elif user_input.startswith("update"): #Example input: update column_name new_value condition
-input_parts = user_input.split()
-column_name = input_parts[1]
-new_value = input_parts[2]
-condition = " ".join(input_parts[3: ])
-update_data(column_name, new_value, condition)
-elif user_input.startswith("delete"): #Example input: delete condition
-condition = " ".join(user_input.split()[1: ])
-delete_data(condition)
-else :#Convert user input to SQL query
-sql_query = convert_to_sql(user_input)
+with gr.Blocks() as demo:
+    with gr.Row():
+        with gr.Column():
+            data = gr.File()
+            qs = gr.Text(label="Input Question")
+            submit_btn = gr.Button("Submit")
+        with gr.Column():
+            answer = gr.Text(label="Output Answer")
+    with gr.Row():
+        dataframe = gr.Dataframe()
 
-# Execute the SQL query and fetch data from the database
-query_result = execute_query(sql_query)
+    submit_btn.click(main, inputs=[data, qs], outputs=[answer])
+    data.change(fn=dataset_change, inputs=data, outputs=[dataframe])
+    gr.Examples([["What is the Annual Salary of Theodore Dinh?"], ["What is the Department of Parker James?"]], inputs=[qs])
 
-# Display the query result
-print("Query Result:")
-for row in query_result:
-    print(row)
-print()
-cursor.close()
-conn.close()
+demo.launch(debug=True)
