@@ -1,84 +1,148 @@
-import gradio as gr
-import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
+!pip
+install
+transformers
+einops
+accelerate
+langchain
+bitsandbytes
+sentence_transformers
+faiss - cpu
+gradio
+pypdf
+sentencepiece
+# %%
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline
 
+from transformers import AutoTokenizer
 
-# Core Development Tasks
+from langchain.embeddings import HuggingFaceEmbeddings
 
-# Step 1: Initial Tool Development
+from langchain.document_loaders.csv_loader import CSVLoader
 
-def analyze_agricultural_data(data):
-    # Your analysis code here
-    # You can display descriptive statistics or basic plots
-    summary_stats = data.describe()
-    correlation_heatmap = sns.heatmap(data.corr(), annot=True)
-    plt.show()
+from langchain.vectorstores import FAISS
 
-    return summary_stats
+from langchain.chains import RetrievalQA
 
+import transformers
 
-iface = gr.Interface(
-    fn=analyze_agricultural_data,
-    inputs="csv",
-    outputs="html",
-    live=True,
-    title="Agricultural Data Analysis Tool"
+import torch
+
+import gradio
+
+import textwrap
+
+# %%
+model = "meta-llama/Llama-2-7b-chat-hf"
+
+tokenizer = AutoTokenizer.from_pretrained(model)
+
+pipeline = transformers.pipeline(
+
+    "text-generation",  # task
+
+    model=model,
+
+    tokenizer=tokenizer,
+
+    torch_dtype=torch.bfloat16,
+
+    trust_remote_code=True,
+
+    device_map="auto",
+
+    max_length=1000,
+
+    do_sample=True,
+
+    top_k=10,
+
+    num_return_sequences=1,
+
+    eos_token_id=tokenizer.eos_token_id
+
 )
 
+llm = HuggingFacePipeline(pipeline=pipeline, model_kwargs={'temperature': 0})
+# %%
+embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cuda'})
+# %%
+loader = CSVLoader(
+    r'C:\Users\Om\PycharmProjects\Agriculture Data Analyser\Data\Production_Crops_Livestock_E_All_Data.csv',
+    encoding="ISO-8859-1", csv_args={'delimiter': ','})
 
-# Step 2: Data Integration
+data = loader.load()
+# %%
+vectorstore = FAISS.from_documents(data, embeddings)
+# %%
+chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=True,
+                                    retriever=vectorstore.as_retriever())
 
-def integrate_external_data(agri_data, weather_data, economic_data):
-    # Your data integration code here
-    # Merge datasets based on common keys or indices
-    merged_data = pd.merge(agri_data, weather_data, on="common_key", how="inner")
-    merged_data = pd.merge(merged_data, economic_data, on="common_key", how="inner")
+query = "What is the annual salary of Sophie Silva?"
 
-    return merged_data
+result = chain(query)
 
+wrapped_text = textwrap.fill(result['result'], width=500)
 
-# Step 3: Visualization and Data Cleaning
+wrapped_text
+llm("How old is Data Science Dojo?")
+# %%
+import gradio as gr
 
-def clean_and_visualize_data(data):
-    # Your data cleaning code here
-    cleaned_data = data.dropna()  # Example: dropping rows with missing values
-
-    # Your visualization code here
-    sns.pairplot(cleaned_data)
-    plt.show()
-
-    return cleaned_data.describe()
-
-
-# Advanced Enhancement and Creative Tasks
-
-# Step 4: Predictive Modeling
-
-def train_predictive_model(data):
-    # Your predictive modeling code here
-    # Example using RandomForestRegressor
-    features = data.drop("target_variable", axis=1)  # Replace "target_variable" with your target variable
-    target = data["target_variable"]
-
-    X_train, X_test, y_train, y_test = train_test_split(features, target, test_size=0.2, random_state=42)
-
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X_train, y_train)
-
-    predictions = model.predict(X_test)
-    mse = mean_squared_error(y_test, predictions)
-
-    return mse
+import pandas as pd
 
 
-# Step 5: Explore innovative approaches
+def main(dataset, qs):
+    # df = pd.read_csv(dataset.name)
+    chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=False,
+                                        retriever=vectorstore.as_retriever())
 
-# Code to explore innovative approaches to merge and analyze different data types
+    # query = "What is the annual salary of Sophie Silva?"
 
-# Launch the Gradio interface
+    result = chain(qs)
 
-iface.launch()
+    wrapped_text = textwrap.fill(result['result'], width=500)
+    return wrapped_text
+
+
+# %%
+
+# %%
+def dataset_change(dataset):
+    global vectorstore
+
+    loader = CSVLoader(dataset.name, encoding="ISO-8859-1", csv_args={'delimiter': ','})
+
+    data = loader.load()
+
+    vectorstore = FAISS.from_documents(data, embeddings)
+
+    df = pd.read_csv(dataset.name)
+
+    return df.head(5)
+
+
+with gr.Blocks() as demo:
+    with gr.Row():
+        with gr.Column():
+            data = gr.File()
+
+            qs = gr.Text(label="Input Question")
+
+            submit_btn = gr.Button("Submit")
+
+        with gr.Column():
+            answer = gr.Text(label="Output Answer")
+
+    with gr.Row():
+        dataframe = gr.Dataframe()
+
+    submit_btn.click(main, inputs=[data, qs], outputs=[answer])
+
+    data.change(fn=dataset_change, inputs=data, outputs=[dataframe])
+
+    gr.Examples([["What is the Annual Salary of Theodore Dinh?"], ["What is the Department of Parker James?"]],
+                inputs=[qs])
+
+demo.launch(debug=True)
+
+# %%
