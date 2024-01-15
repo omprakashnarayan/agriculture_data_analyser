@@ -4,6 +4,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.document_loaders.csv_loader import CSVLoader
 from langchain_community.vectorstores import FAISS
 from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import Milvus
 from langchain.chains import RetrievalQA
 import transformers
 import torch
@@ -13,17 +14,17 @@ import textwrap
 import chardet
 
 import torch
-print(torch.cuda.is_available())
+print("CUDA Available:", torch.cuda.is_available())
 
-model = "meta-llama/Llama-2-7b-chat-hf"
-tokenizer = AutoTokenizer.from_pretrained(model)
+model = "h2oai/h2ogpt-4096-llama2-7b-chat"
+tokenizer = AutoTokenizer.from_pretrained(model,legacy=False)
 pipeline = transformers.pipeline(
     "text-generation",  # task
     model=model,
     tokenizer=tokenizer,
-    torch_dtype=torch.bfloat16,
+    torch_dtype=torch.float16,
     trust_remote_code=True,
-    device_map="auto",
+    device_map="cuda:0",
     max_length=1000,
     do_sample=True,
     top_k=10,
@@ -72,7 +73,7 @@ def main(dataset, qs):
     documents = [Document(page_content=row['text']) for _, row in df.iterrows()]
 
     # Create the FAISS vector store
-    vectorstore = Chroma.from_documents(documents, embeddings)
+    vectorstore = FAISS.from_documents(documents, embeddings)
     # df = pd.read_csv(dataset.name)
     chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", return_source_documents=False,
                                         retriever=vectorstore.as_retriever())

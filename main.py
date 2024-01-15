@@ -1,65 +1,53 @@
-from langchain.llms.huggingface_pipeline import HuggingFacePipeline 
-
-from transformers import AutoTokenizer 
-
+from langchain.llms.huggingface_pipeline import HuggingFacePipeline
+from transformers import AutoTokenizer
 from langchain_community.embeddings import HuggingFaceEmbeddings
-
-from langchain.document_loaders.csv_loader import CSVLoader 
-
+from langchain.document_loaders.csv_loader import CSVLoader
 from langchain_community.vectorstores import FAISS
-
-from langchain.chains import RetrievalQA 
-
-import transformers 
-
-import torch 
-
+from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores import Milvus
+from langchain.chains import RetrievalQA
+import transformers
+import torch
 import pandas as pd
-
-import gradio 
-
+import gradio
 import textwrap
-
 import chardet
 
-model = "meta-llama/Llama-2-7b-chat-hf"
+import torch
+print("CUDA Available:", torch.cuda.is_available())
 
-tokenizer = AutoTokenizer.from_pretrained(model)
-
+model = "h2oai/h2ogpt-4096-llama2-7b-chat"
+tokenizer = AutoTokenizer.from_pretrained(model,legacy=False)
 pipeline = transformers.pipeline(
-
     "text-generation",  # task
-
     model=model,
-
     tokenizer=tokenizer,
-
-    torch_dtype=torch.bfloat16,
-
+    torch_dtype=torch.float16,
     trust_remote_code=True,
-
-    device_map="auto",
-
+    device_map="cuda:0",
     max_length=1000,
-
     do_sample=True,
-
     top_k=10,
-
     num_return_sequences=1,
-
     eos_token_id=tokenizer.eos_token_id
-
 )
 
 llm = HuggingFacePipeline(pipeline=pipeline, model_kwargs={'temperature': 0})
 
-embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2',model_kwargs={'device': 'cuda'})
+# Initialize embeddings with additional debugging information
+try:
+    embeddings = HuggingFaceEmbeddings(model_name='sentence-transformers/all-MiniLM-L6-v2', model_kwargs={'device': 'cuda'})
+    print("embedings", embeddings)
+except Exception as e:
+    print(f"An error occurred during embeddings model initialization: {e}")
+    raise
+
+
 
 import gradio as gr
-
 import pandas as pd
 from langchain_core.documents import Document
+
 
 
 def main(dataset, qs):
@@ -98,8 +86,6 @@ def main(dataset, qs):
     return wrapped_text
 
 
-
-import pandas as pd
 
 def dataset_change(dataset):
     # Use chardet to detect the encoding
