@@ -25,7 +25,7 @@ pipeline = transformers.pipeline(
     torch_dtype=torch.float16,
     trust_remote_code=True,
     device_map="cuda:0",
-    max_length=1000,
+    max_length=10000,
     do_sample=True,
     top_k=10,
     num_return_sequences=1,
@@ -56,21 +56,9 @@ def main(dataset, qs):
         result = chardet.detect(f.read())
     encoding = result['encoding']
 
-    # Load data using the detected encoding
-    df = pd.read_csv(dataset.name, encoding=encoding)
+    loader = CSVLoader(dataset.name)
 
-    # Get the names of text columns dynamically
-    text_columns = [col for col in df.columns if df[col].dtype == 'object']
-
-    # Check if there are any text columns
-    if not text_columns:
-        raise ValueError("No text columns found in the dataset.")
-
-    # Concatenate text from multiple columns into a single 'text' column
-    df['text'] = df[text_columns].apply(lambda x: ' '.join(map(str, x)), axis=1)
-
-    # Create a list of documents
-    documents = [Document(page_content=row['text']) for _, row in df.iterrows()]
+    documents = loader.load()
 
     # Create the FAISS vector store
     vectorstore = FAISS.from_documents(documents, embeddings)
@@ -97,9 +85,9 @@ def dataset_change(dataset):
     df = pd.read_csv(dataset.name, encoding=encoding)
 
     # Display the first 5 rows in UI
-    df_head = df.head(5)
+    # df_head = df.head(10)
 
-    return df_head
+    return df
 
 with gr.Blocks() as demo:
     with gr.Row():
